@@ -1,0 +1,207 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Vizboard v1.1 Pro+ – Export, Table, Insight</title>
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.0/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', sans-serif; background: #F9FAFB; margin: 0; padding: 0; color: #374151; }
+    header { background-color: #C7D2FE; padding: 32px; text-align: center; }
+    .logo { font-size: 36px; font-weight: 700; margin: 0; }
+    .container { max-width: 1080px; margin: auto; padding: 32px 20px; }
+    .upload-box, .export-buttons { border: 2px dashed #9CA3AF; background: #fff; padding: 24px; text-align: center; border-radius: 12px; margin-bottom: 24px; }
+    .filters, .chart-types, .export-buttons { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-bottom: 20px; }
+    select, button { padding: 12px; border-radius: 8px; font-size: 15px; cursor: pointer; }
+    select { border: 1px solid #D1D5DB; background: white; min-width: 160px; }
+    .chart-btn, .export-btn { border: none; background-color: #E0E7FF; color: #374151; font-weight: 600; }
+    .chart-btn.active { background-color: #B2F5EA; }
+    .chart-container, .summary, .data-table { background-color: white; padding: 24px; border-radius: 14px; margin-bottom: 24px; border: 1px solid #E5E7EB; }
+    #chart { height: 400px; }
+    .summary { background-color: #FEF3C7; border-color: #FCD34D; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { border: 1px solid #E5E7EB; padding: 8px 12px; text-align: left; font-size: 14px; }
+    th { background: #F3F4F6; }
+  </style>
+</head>
+<body>
+
+<header><h1 class="logo">VIZBOARD</h1></header>
+
+<main class="container">
+  <section class="upload-box">
+    <input type="file" id="upload" accept=".xlsx" />
+    <p>Upload Excel file (.xlsx)</p>
+  </section>
+
+  <section class="filters">
+    <select id="xSelect"><option>X Axis</option></select>
+    <select id="ySelect"><option>Y Axis</option></select>
+  </section>
+
+  <section class="chart-types">
+    <button class="chart-btn active" data-type="bar">Bar</button>
+    <button class="chart-btn" data-type="line">Line</button>
+    <button class="chart-btn" data-type="area">Area</button>
+    <button class="chart-btn" data-type="pie">Pie</button>
+    <button class="chart-btn" data-type="scatter">Scatter</button>
+  </section>
+
+  <section class="export-buttons" style="border:none; padding:0; margin-bottom:32px; justify-content:flex-start;">
+    <button class="export-btn" onclick="downloadPNG()">Export PNG</button>
+    <button class="export-btn" onclick="downloadPDF()">Export PDF</button>
+    </section>
+
+  <section class="chart-container">
+    <h3 id="chartTitle">Selected Chart</h3>
+    <div id="chart"></div>
+  </section>
+
+  <section class="summary" id="summaryBox">
+    <strong>Summary:</strong> Upload a file and select valid fields to generate chart.
+  </section>
+
+  <section class="data-table">
+    <h3>Raw Data Table</h3>
+    <div id="dataTable"></div>
+  </section>
+</main>
+
+<script>
+  const upload = document.getElementById('upload');
+  const xSelect = document.getElementById('xSelect');
+  const ySelect = document.getElementById('ySelect');
+  const chartButtons = document.querySelectorAll('.chart-btn');
+  const chartTitle = document.getElementById('chartTitle');
+  const summaryBox = document.getElementById('summaryBox');
+  const dataTable = document.getElementById('dataTable');
+
+  let chartType = 'bar';
+  let sheetData = [];
+
+  chartButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      chartButtons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      chartType = btn.getAttribute('data-type');
+      drawChart();
+    });
+  });
+
+  function populateDropdowns(headers) {
+    const numericCols = headers.filter(h => sheetData.every(row => !isNaN(parseFloat(row[h]))));
+    const categoryCols = headers.filter(h => !numericCols.includes(h));
+
+    xSelect.innerHTML = '<option>X Axis</option>';
+    ySelect.innerHTML = '<option>Y Axis</option>';
+
+    categoryCols.forEach(h => {
+      const opt = document.createElement('option');
+      opt.value = h;
+      opt.textContent = h;
+      xSelect.appendChild(opt);
+    });
+
+    numericCols.forEach(h => {
+      const opt = document.createElement('option');
+      opt.value = h;
+      opt.textContent = h;
+      ySelect.appendChild(opt);
+    });
+  }
+
+  function drawChart() {
+    const xKey = xSelect.value;
+    const yKey = ySelect.value;
+    if (!xKey || !yKey || sheetData.length === 0) return;
+
+    const x = sheetData.map(row => row[xKey]);
+    const y = sheetData.map(row => parseFloat(row[yKey]));
+
+    const xIsNumeric = x.every(v => !isNaN(parseFloat(v)));
+    const yIsNumeric = y.every(v => !isNaN(parseFloat(v)));
+
+    if (chartType === 'scatter' && (!xIsNumeric || !yIsNumeric)) {
+      summaryBox.innerHTML = "⚠️ Scatter requires both X and Y to be numeric.";
+      return;
+    }
+
+    if (chartType === 'pie' && (!Array.isArray(x) || !yIsNumeric)) {
+      summaryBox.innerHTML = "⚠️ Pie requires X as labels and Y as numeric values.";
+      return;
+    }
+
+    let data;
+    if (chartType === 'pie') {
+      data = [{ labels: x, values: y, type: 'pie' }];
+    } else {
+      data = [{ x: x, y: y, type: chartType, fill: chartType === 'area' ? 'tozeroy' : undefined }];
+    }
+
+    Plotly.newPlot('chart', data, {
+      title: `${yKey} by ${xKey}`,
+      paper_bgcolor: '#fff',
+      plot_bgcolor: '#F9FAFB'
+    });
+
+    chartTitle.textContent = `${yKey} by ${xKey}`;
+    const maxVal = Math.max(...y);
+    const minVal = Math.min(...y);
+    const maxLabel = x[y.indexOf(maxVal)];
+    const minLabel = x[y.indexOf(minVal)];
+    summaryBox.innerHTML = `📈 <strong>${yKey}</strong> peaked at <strong>${maxVal}</strong> (${maxLabel}) and was lowest at <strong>${minVal}</strong> (${minLabel}).`;
+  }
+
+  function showTable() {
+    if (!sheetData.length) return;
+    const headers = Object.keys(sheetData[0]);
+    let html = '<table><thead><tr>';
+    headers.forEach(h => html += `<th>${h}</th>`);
+    html += '</tr></thead><tbody>';
+    sheetData.forEach(row => {
+      html += '<tr>';
+      headers.forEach(h => html += `<td>${row[h]}</td>`);
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    dataTable.innerHTML = html;
+  }
+
+  function downloadPNG() {
+    Plotly.downloadImage('chart', { format: 'png', filename: 'vizboard_chart' });
+  }
+
+  function downloadPDF() {
+    Plotly.toImage(document.getElementById('chart'), { format: 'png' }).then(imgData => {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+      doc.addImage(imgData, 'PNG', 15, 20, 180, 120);
+      doc.save("vizboard_chart.pdf");
+    });
+  }
+
+  upload.addEventListener('change', (e) => {
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const data = new Uint8Array(evt.target.result);
+      const workbook = XLSX.read(data, { type: 'array' });
+      const sheet = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
+      sheetData = sheet;
+      const headers = Object.keys(sheet[0]);
+      populateDropdowns(headers);
+      showTable();
+    };
+    reader.readAsArrayBuffer(e.target.files[0]);
+  });
+
+  [xSelect, ySelect].forEach(select => {
+    select.addEventListener('change', drawChart);
+  });
+</script>
+
+</body>
+</html>
